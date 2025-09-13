@@ -26,7 +26,11 @@
         .custom-scrollbar::-webkit-scrollbar { width: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 20px;}
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #94a3b8; border-radius: 20px; }
-        .chatbot-container { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .chatbot-container { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    /* Custom orange for chatbot */
+    .chatbot-orange-bg { background-color: #ff9800 !important; }
+    .chatbot-orange-text { color: #ff9800 !important; }
+    .chatbot-orange-header { background-color: #ff9800 !important; color: #fff !important; }
         .hash-tag {
             background-color: #f1f5f9;
             color: #64748b;
@@ -63,14 +67,15 @@
     </div>
     
     <!-- CHATBOT HELPER -->
-    <div id="chatbot-container" class="hidden chatbot-container fixed bottom-5 right-5 w-16 h-16 rounded-full bg-accent shadow-xl cursor-pointer flex items-center justify-center z-50">
+    <div id="chatbot-container" class="hidden chatbot-container fixed bottom-5 right-5 w-16 h-16 rounded-full chatbot-orange-bg shadow-xl cursor-pointer flex items-center justify-center z-50">
         <i data-lucide="message-circle" class="text-white h-8 w-8"></i>
     </div>
     <div id="chatbot-window" class="hidden chatbot-container fixed bottom-24 right-5 w-80 h-96 bg-white trust-card flex flex-col z-50">
-        <div class="bg-accent text-white p-3 flex justify-between items-center rounded-t-lg">
+        <div class="chatbot-orange-header p-3 flex justify-between items-center rounded-t-lg">
             <h3 class="font-semibold">TrustTrail Helper</h3>
             <button id="close-chatbot"><i data-lucide="x" class="h-5 w-5"></i></button>
         </div>
+        <div class="text-xs text-slate-500 px-3 pt-1 pb-0" style="margin-bottom:-8px;">AI Assistant</div>
         <div id="chatbot-messages" class="flex-1 p-3 overflow-y-auto custom-scrollbar"></div>
         <div class="p-2 border-t"><input id="chatbot-input" type="text" placeholder="Ask a question..." class="w-full p-2 border border-slate-300 rounded-md"></div>
     </div>
@@ -421,7 +426,7 @@
                 if (e.key === 'Enter' && e.target.value) {
                     const input = e.target.value;
                     const messages = document.getElementById('chatbot-messages');
-                    messages.innerHTML += `<div class="text-right mt-2"><span class="bg-primary text-white p-2 rounded-lg inline-block text-sm">${input}</span></div>`;
+                    messages.innerHTML += `<div class="text-right mt-2"><span class="chatbot-orange-bg text-white p-2 rounded-lg inline-block text-sm">${input}</span></div>`;
                     let response = "Sorry, I can only provide info on main department budgets. Try 'sports budget' or 'academics budget'.";
                     const query = input.toLowerCase();
                     const budget = ledger.find(tx => tx.type === 'budget' && tx.to.toLowerCase().includes(query.split(' ')[0]));

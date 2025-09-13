@@ -158,29 +158,9 @@ app.post('/api/transactions', [authMiddleware, adminMiddleware], upload.single('
 // --- SERVER INITIALIZATION ---
 const startServer = async () => {
     try {
-        await User.deleteMany({});
-        await Transaction.deleteMany({});
-        console.log('Previous data cleared.');
-
-        for (const userData of initialUsers) {
-            const salt = await bcrypt.genSalt(10);
-            userData.password = await bcrypt.hash(userData.password, salt);
-            await new User(userData).save();
-        }
-        console.log('Dummy users seeded.');
-        
-        let previousHash = '0';
-        for (const txData of initialLedgerData) {
-            const blockData = { ...txData, timestamp: new Date(), previousHash, feedback:[] };
-            const currentHash = calculateHash(blockData);
-            const newTx = new Transaction({ ...blockData, currentHash });
-            await newTx.save();
-            previousHash = currentHash;
-        }
-        console.log('Dummy transactions seeded.');
-
+        // Data is no longer cleared or reseeded on every server start.
     } catch (err) {
-        console.error("Error during seeding:", err);
+        console.error("Error during server initialization:", err);
     }
 
     app.listen(PORT, () => {
