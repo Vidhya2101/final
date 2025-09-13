@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrustTrail - Financial Transparency Portal</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; color: #1e293b; }
+        .trust-card { background-color: white; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); border: 1px solid #e2e8f0; }
+        .btn-primary { background-color: #0ea5e9; color: white; transition: background-color 0.3s; }
+        .btn-primary:hover { background-color: #0284c7; }
+        .btn-accent { background-color: #f97316; color: white; transition: background-color 0.3s; }
+        .btn-accent:hover { background-color: #ea580c; }
+        .text-primary { color: #0ea5e9; }
+        .text-accent { color: #f97316; }
+        .anomaly-alert { animation: pulse-bg 2s ease-in-out infinite; }
+        @keyframes pulse-bg { 0%, 100% { background-color: #fef2f2; } 50% { background-color: #fee2e2; } }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 20px;}
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #94a3b8; border-radius: 20px; }
+        .chatbot-container { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .hash-tag {
+            background-color: #f1f5f9;
+            color: #64748b;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .hash-tag:hover {
+            background-color: #e2e8f0;
+        }
+    </style>
+</head>
+<body class="antialiased">
+    <div id="app">
+        <!-- PAGE 1: LOGIN -->
+        <div id="login-page" class="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-sky-100 to-white">
+            <div class="w-full max-w-md mx-auto text-center trust-card p-8 md:p-10 space-y-8">
+                <div>
+                    <h1 class="text-5xl font-extrabold text-primary tracking-tight">TrustTrail</h1>
+                    <p class="text-slate-500 mt-2 text-lg">Financial Transparency, Secured and Verified.</p>
+                </div>
+                <div id="auth-form-container"></div>
+                 <p id="auth-error" class="text-red-500 text-sm hidden"></p>
+            </div>
+        </div>
+
+        <!-- PAGE 2: ADMIN DASHBOARD -->
+        <div id="admin-dashboard" class="hidden p-4 sm:p-6 lg:p-8"></div>
+
+        <!-- PAGE 3: PUBLIC DASHBOARD -->
+        <div id="public-dashboard" class="hidden p-4 sm:p-6 lg:p-8"></div>
+    </div>
+    
+    <!-- CHATBOT HELPER -->
+    <div id="chatbot-container" class="hidden chatbot-container fixed bottom-5 right-5 w-16 h-16 rounded-full bg-accent shadow-xl cursor-pointer flex items-center justify-center z-50">
+        <i data-lucide="message-circle" class="text-white h-8 w-8"></i>
+    </div>
+    <div id="chatbot-window" class="hidden chatbot-container fixed bottom-24 right-5 w-80 h-96 bg-white trust-card flex flex-col z-50">
+        <div class="bg-accent text-white p-3 flex justify-between items-center rounded-t-lg">
+            <h3 class="font-semibold">TrustTrail Helper</h3>
+            <button id="close-chatbot"><i data-lucide="x" class="h-5 w-5"></i></button>
+        </div>
+        <div id="chatbot-messages" class="flex-1 p-3 overflow-y-auto custom-scrollbar"></div>
+        <div class="p-2 border-t"><input id="chatbot-input" type="text" placeholder="Ask a question..." class="w-full p-2 border border-slate-300 rounded-md"></div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:3001';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            let ledger = [];
+            let studentInfo = {};
+            let allocationChart, spendingChart;
+            let currentCurrency = 'INR';
+            const exchangeRate = 83.5;
+
+            const pages = {
+                login: document.getElementById('login-page'),
+                admin: document.getElementById('admin-dashboard'),
+                public: document.getElementById('public-dashboard'),
+            };
+
+            const showPage = (pageKey) => {
+                Object.values(pages).forEach(p => p.classList.add('hidden'));
+                pages[pageKey].classList.remove('hidden');
+                document.getElementById('chatbot-container').classList.toggle('hidden', pageKey === 'login');
+            };
+            
+            const formatCurrency = (amount) => {
+                if (typeof amount !== 'number') return currentCurrency === 'INR' ? '₹0' : '$0';
+                const value = currentCurrency === 'INR' ? amount : amount / exchangeRate;
+                const symbol = currentCurrency === 'INR' ? '₹' : '$';
+                const locale = currentCurrency === 'INR' ? 'en-IN' : 'en-US';
+                return `${symbol}${Math.round(value).toLocaleString(locale)}`;
+            };
+
+            const fetchTransactions = async () => {
+                const token = localStorage.getItem('authToken');
+                if (!token) {
+                    showPage('login');
+                    renderAuthForm();
+                    return;
+                }
+                try {
+                    const response = await fetch(`${API_URL}/api/transactions`, { headers: { 'Authorization': `Bearer ${token}` } });
+                    if (response.status === 401 || response.status === 400) throw new Error('Auth failed');
+                    const data = await response.json();
+                    ledger = data.ledger;
+                    studentInfo = data.studentInfo;
+                    renderAll();
+                } catch (error) {
+                    console.error("Fetch error:", error);
+                    handleLogout();
+                }
+            };
+            
+            const renderAll = () => {
+                const adminSearch = document.getElementById('admin-search-bar')?.value || '';
+                const publicSearch = document.getElementById('public-search-bar')?.value || '';
+                renderAdminDashboard(adminSearch);
+                renderPublicDashboard(publicSearch);
+            };
+
+            const checkAnomalies = () => {
+                const container = document.getElementById('anomaly-alerts-container');
+                if(!container) return;
+                container.innerHTML = '';
+                let hasAnomalies = false;
+
+                const budgets = ledger.filter(tx => tx.type === 'budget');
+                budgets.forEach(budget => {
+                    const totalSpent = ledger
+                        .filter(tx => tx.type === 'expense' && tx.from === budget.to)
+                        .reduce((sum, tx) => sum + tx.amount, 0);
+
+                    if (budget.anomalyThreshold && totalSpent > budget.anomalyThreshold) {
+                        hasAnomalies = true;
+                        container.innerHTML += `<div class="p-3 border-l-4 border-red-500 text-red-800 rounded-r-md anomaly-alert"><p class="font-bold">Budget Overrun Alert!</p><p class="text-sm">${budget.to} has exceeded its budget.</p></div>`;
+                    }
+                });
+
+                if (!hasAnomalies) {
+                    container.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">No anomalies detected.</p>';
+                }
+            };
+
+            const renderAdminDashboard = (filter = '') => {
+                const totalBudget = ledger.filter(tx => tx.type === 'budget').reduce((sum, tx) => sum + tx.amount, 0);
+                const moneyUsed = ledger.filter(tx => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+                
+                pages.admin.innerHTML = `
+                <header class="max-w-7xl mx-auto flex items-center justify-between pb-6 border-b">
+                    <div><h1 class="text-3xl font-bold">Admin Mission Control</h1><p class="text-slate-500">Manage college finances with full transparency.</p></div>
+                     <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2"><span class="text-sm font-medium">Currency:</span><button id="admin-currency-toggle-inr" class="px-3 py-1 text-sm rounded-md font-semibold"></button><button id="admin-currency-toggle-usd" class="px-3 py-1 text-sm rounded-md font-semibold"></button></div>
+                        <button id="admin-logout-btn" class="text-sm font-medium text-slate-600 hover:text-primary">Logout</button>
+                    </div>
+                </header>
+                <main class="max-w-7xl mx-auto space-y-8 mt-8">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="trust-card p-6"><h3 class="text-sm font-medium text-slate-500">Total Budget (from fees)</h3><p class="text-3xl font-bold text-primary mt-1">${formatCurrency(totalBudget)}</p></div>
+                        <div class="trust-card p-6"><h3 class="text-sm font-medium text-slate-500">Total Utilised</h3><p class="text-3xl font-bold text-accent mt-1">${formatCurrency(moneyUsed)}</p></div>
+                        <div class="trust-card p-6"><h3 class="text-sm font-medium text-slate-500">Net Balance Remaining</h3><p class="text-3xl font-bold mt-1">${formatCurrency(totalBudget - moneyUsed)}</p></div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                        <div class="lg:col-span-3 trust-card p-6"><h3 class="text-lg font-semibold mb-4">Fund Allocation</h3><div class="relative h-64"><canvas id="allocation-chart"></canvas></div></div>
+                        <div class="lg:col-span-2 trust-card p-6"><h3 class="text-lg font-semibold mb-4">Alerts & Actions</h3><div id="anomaly-alerts-container" class="space-y-4"></div></div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                         <div class="lg:col-span-2 trust-card p-6">
+                            <h3 class="text-lg font-semibold mb-4">Add New Transaction</h3>
+                            <form id="add-transaction-form" class="space-y-4">
+                                <div><label for="tx-from" class="text-sm font-medium">From</label><select id="tx-from" required class="mt-1 block w-full p-2 border border-slate-300 rounded-md"></select></div>
+                                <div><label for="tx-to" class="text-sm font-medium">To (Vendor/Project)</label><input id="tx-to" type="text" required class="mt-1 block w-full p-2 border border-slate-300 rounded-md"></div>
+                                <div><label for="tx-amount" class="text-sm font-medium">Amount (₹)</label><input id="tx-amount" type="number" required class="mt-1 block w-full p-2 border border-slate-300 rounded-md"></div>
+                                <div><label for="tx-description" class="text-sm font-medium">Description</label><textarea id="tx-description" rows="2" required class="mt-1 block w-full p-2 border border-slate-300 rounded-md"></textarea></div>
+                                <div><label for="tx-proof" class="text-sm font-medium">Upload Proof</label><input id="tx-proof" type="file" required class="mt-1 block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-sky-50 file:text-primary hover:file:bg-sky-100"></div>
+                                <button type="submit" class="w-full btn-primary font-semibold py-3 rounded-md">Add to Ledger</button>
+                            </form>
+                        </div>
+                        <div class="lg:col-span-3 trust-card p-6">
+                            <h3 class="text-lg font-semibold mb-4">Full Transaction History</h3>
+                            <input id="admin-search-bar" type="text" placeholder="Search all transactions..." class="w-full p-3 border border-slate-300 rounded-md mb-4" value="${filter}">
+                            <div id="admin-history-container" class="space-y-3 max-h-80 overflow-y-auto custom-scrollbar pr-2"></div>
+                        </div>
+                    </div>
+                </main>
+                `;
+                
+                const fromSelect = document.getElementById('tx-from');
+                const departments = [...new Set(ledger.filter(tx => tx.type === 'budget').map(tx => tx.to))];
+                fromSelect.innerHTML = '<option value="">Select Department</option>';
+                departments.forEach(dept => fromSelect.innerHTML += `<option value="${dept}">${dept}</option>`);
+                
+                const historyContainer = document.getElementById('admin-history-container');
+                const filterLower = filter.toLowerCase();
+                const filteredLedgerAdmin = ledger.filter(tx => tx.to.toLowerCase().includes(filterLower) || tx.from.toLowerCase().includes(filterLower) || (tx.description && tx.description.toLowerCase().includes(filterLower)));
+                historyContainer.innerHTML = '';
+                [...filteredLedgerAdmin].reverse().forEach(tx => {
+                    historyContainer.innerHTML += `
+                        <div class="p-3 rounded-lg border-l-4 ${tx.type === 'income' ? 'border-green-500' : tx.type === 'budget' ? 'border-primary' : 'border-accent'}">
+                           <div class="flex justify-between items-start"><p class="font-semibold text-sm">${tx.from} → ${tx.to}</p><p class="font-bold text-sm">${formatCurrency(tx.amount)}</p></div>
+                           <p class="text-xs text-slate-500 mt-1">${new Date(tx.timestamp).toLocaleString()}</p>
+                        </div>
+                    `;
+                });
+
+                const allocationCtx = document.getElementById('allocation-chart').getContext('2d');
+                if (allocationChart) allocationChart.destroy();
+                allocationChart = new Chart(allocationCtx, {
+                    type: 'doughnut',
+                    data: { labels: departments, datasets: [{ data: departments.map(d => ledger.find(t=>t.to===d)?.amount||0), backgroundColor: ['#0ea5e9', '#f97316', '#10b981', '#eab308', '#8b5cf6'], borderColor: '#fff', borderWidth: 4 }] },
+                    options: { responsive: true, maintainAspectRatio: false, cutout: '70%' }
+                });
+
+                checkAnomalies();
+                attachAdminListeners();
+                updateCurrencyToggle();
+                lucide.createIcons();
+            };
+
+             const renderPublicDashboard = (filter = '') => {
+                const feesCollected = studentInfo.totalFees || 0;
+                const moneyUsed = ledger.filter(tx => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+
+                pages.public.innerHTML = `
+                 <header class="max-w-7xl mx-auto flex items-center justify-between pb-6 border-b">
+                    <div><h1 class="text-3xl font-bold">Student Transparency Hub</h1><p class="text-slate-500">Where your fee money goes. Verifiably.</p></div>
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2"><span class="text-sm font-medium">Currency:</span><button id="public-currency-toggle-inr" class="px-3 py-1 text-sm rounded-md font-semibold"></button><button id="public-currency-toggle-usd" class="px-3 py-1 text-sm rounded-md font-semibold"></button></div>
+                        <button id="public-logout-btn" class="text-sm font-medium text-slate-600 hover:text-primary">Logout</button>
+                    </div>
+                 </header>
+                 <main class="max-w-7xl mx-auto space-y-8 mt-8">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div class="trust-card p-6 text-center"><h3 class="text-sm font-medium text-slate-500">Total Fees Collected</h3><p class="text-3xl font-bold text-primary mt-1">${formatCurrency(feesCollected)}</p></div>
+                        <div class="trust-card p-6 text-center"><h3 class="text-sm font-medium text-slate-500">Contributing Students</h3><p class="text-3xl font-bold mt-1">${studentInfo.count || 0}</p></div>
+                        <div class="trust-card p-6 text-center"><h3 class="text-sm font-medium text-slate-500">Total Utilised</h3><p class="text-3xl font-bold text-accent mt-1">${formatCurrency(moneyUsed)}</p></div>
+                        <div class="trust-card p-6 text-center"><h3 class="text-sm font-medium text-slate-500">Net Balance Remaining</h3><p class="text-3xl font-bold mt-1">${formatCurrency(feesCollected - moneyUsed)}</p></div>
+                    </div>
+                    <div class="trust-card p-6"><h3 class="text-lg font-semibold mb-4">Fund Flow: From Fees to Expenses</h3><div class="relative h-80"><canvas id="spending-chart"></canvas></div></div>
+                    <div class="trust-card p-6">
+                        <input id="public-search-bar" type="text" placeholder="Search by department, vendor, or keyword..." class="w-full p-3 border border-slate-300 rounded-md mb-4" value="${filter}">
+                        <div id="public-ledger-container" class="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2"></div>
+                    </div>
+                 </main>
+                `;
+
+                const ledgerContainer = document.getElementById('public-ledger-container');
+                const filterLower = filter.toLowerCase();
+                const filteredLedger = ledger.filter(tx => tx.type === 'expense' && (tx.to.toLowerCase().includes(filterLower) || tx.from.toLowerCase().includes(filterLower) || (tx.description && tx.description.toLowerCase().includes(filterLower))));
+                
+                ledgerContainer.innerHTML = '';
+                if(filteredLedger.length === 0){
+                    ledgerContainer.innerHTML = `<div class="text-center py-10 text-slate-400"><p>No transactions match your search.</p></div>`;
+                } else {
+                    filteredLedger.forEach(tx => {
+                        ledgerContainer.innerHTML += `
+                            <div class="border-t py-4">
+                                <div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-center">
+                                    <div class="md:col-span-4"><p class="font-semibold text-slate-800">${tx.to}</p><p class="text-sm text-slate-500">Funded by: ${tx.from}</p><div class="flex items-center gap-2 mt-2"><span class="hash-tag" title="Current Block Hash: ${tx.currentHash}">Hash: ${tx.currentHash.substring(0, 12)}...</span><span class="hash-tag" title="Previous Block Hash: ${tx.previousHash}">Prev: ${tx.previousHash.substring(0, 12)}...</span></div></div>
+                                    <div class="text-left md:text-right"><p class="font-bold text-lg text-accent">${formatCurrency(tx.amount)}</p></div>
+                                    <div class="flex gap-2 justify-start md:justify-end">
+                                        ${tx.proofFilename ? `<a href="${API_URL}/uploads/${tx.proofFilename}" target="_blank" class="text-xs font-semibold text-primary hover:underline">View Proof</a>` : ''}
+                                        <button class="text-xs font-semibold text-slate-500 hover:underline">Feedback</button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+                const spendingCtx = document.getElementById('spending-chart').getContext('2d');
+                if (spendingChart) spendingChart.destroy();
+                const departmentSpending = {};
+                ledger.filter(tx => tx.type === 'expense').forEach(tx => { departmentSpending[tx.from] = (departmentSpending[tx.from] || 0) + tx.amount; });
+                spendingChart = new Chart(spendingCtx, {
+                    type: 'bar',
+                    data: { labels: Object.keys(departmentSpending), datasets: [{ label: `Total Spending (${currentCurrency})`, data: Object.values(departmentSpending).map(a => currentCurrency === 'INR' ? a : a / exchangeRate), backgroundColor: '#0ea5e9', borderRadius: 4 }] },
+                    options: { scales: { y: { beginAtZero: true, ticks: { callback: (value) => formatCurrency(value) } } }, responsive: true, maintainAspectRatio: false }
+                });
+                
+                attachPublicListeners();
+                updateCurrencyToggle();
+                lucide.createIcons();
+            };
+
+            const renderAuthForm = (isLogin = true) => {
+                document.getElementById('auth-form-container').innerHTML = `
+                    <form id="auth-form" class="space-y-6 text-left">
+                        ${isLogin ? '' : `<div><label for="role-select-auth" class="block text-sm font-medium">I am a...</label><select id="role-select-auth" class="mt-1 block w-full p-2 border rounded-md"><option>Student</option><option>Parent</option><option>College Admin</option></select></div>`}
+                        <div><label for="email-auth" class="block text-sm font-medium">Email</label><input type="email" id="email-auth" required class="mt-1 block w-full p-2 border rounded-md"></div>
+                        <div><label for="password-auth" class="block text-sm font-medium">Password</label><input type="password" id="password-auth" required class="mt-1 block w-full p-2 border rounded-md"></div>
+                        <button type="submit" class="w-full btn-primary font-semibold py-3 rounded-md text-lg">${isLogin ? 'Sign In' : 'Sign Up'}</button>
+                        <p class="text-center text-sm">${isLogin ? "Don't have an account?" : "Already have an account?"} <a href="#" id="auth-toggle" class="font-medium text-primary hover:underline">${isLogin ? 'Sign Up' : 'Sign In'}</a></p>
+                    </form>
+                `;
+                document.getElementById('auth-toggle').addEventListener('click', (e) => { e.preventDefault(); renderAuthForm(!isLogin); });
+                document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
+            };
+
+            const handleAuthSubmit = async (e) => {
+                e.preventDefault();
+                const isLogin = e.target.querySelector('button').textContent === 'Sign In';
+                const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+                const email = document.getElementById('email-auth').value;
+                const password = document.getElementById('password-auth').value;
+                const role = isLogin ? undefined : document.getElementById('role-select-auth').value;
+                
+                if(!email || !password || (!isLogin && !role)) { alert("Please fill all fields."); return; }
+
+                try {
+                    const response = await fetch(`${API_URL}${endpoint}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, password, role })
+                    });
+                    const data = await response.json();
+                    const errorEl = document.getElementById('auth-error');
+
+                    if (!response.ok) { errorEl.textContent = data.message; errorEl.classList.remove('hidden'); return; }
+                    errorEl.classList.add('hidden');
+
+                    if(isLogin) {
+                        localStorage.setItem('authToken', data.token);
+                        await fetchTransactions();
+                        if (data.role === 'College Admin') showPage('admin'); else showPage('public');
+                    } else {
+                        alert('Registration successful! Please sign in.');
+                        renderAuthForm(true);
+                    }
+                } catch (error) { console.error("Auth error:", error); }
+            };
+            
+            const handleLogout = () => {
+                localStorage.removeItem('authToken');
+                showPage('login');
+                renderAuthForm();
+            };
+            
+            function attachAdminListeners() {
+                document.getElementById('admin-logout-btn').addEventListener('click', handleLogout);
+                document.getElementById('admin-search-bar').addEventListener('input', (e) => renderAdminDashboard(e.target.value));
+                document.getElementById('admin-currency-toggle-inr').addEventListener('click', () => { currentCurrency = 'INR'; renderAll(); });
+                document.getElementById('admin-currency-toggle-usd').addEventListener('click', () => { currentCurrency = 'USD'; renderAll(); });
+                document.getElementById('add-transaction-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const token = localStorage.getItem('authToken');
+                    const form = e.target;
+                    const formData = new FormData();
+                    formData.append('from', form.elements['tx-from'].value);
+                    formData.append('to', form.elements['tx-to'].value);
+                    formData.append('amount', form.elements['tx-amount'].value);
+                    formData.append('description', form.elements['tx-description'].value);
+                    formData.append('proof', form.elements['tx-proof'].files[0]);
+                    formData.append('type', 'expense');
+
+                    try {
+                        const response = await fetch(`${API_URL}/api/transactions`, { method: 'POST', headers: {'Authorization': `Bearer ${token}`}, body: formData });
+                        if (!response.ok) throw new Error('Server responded with an error');
+                        await fetchTransactions();
+                        form.reset();
+                        alert('Transaction added successfully!');
+                    } catch (error) {
+                        console.error('Failed to add transaction:', error);
+                        alert('Error: Could not add transaction.');
+                    }
+                });
+            }
+
+            function attachPublicListeners() {
+                document.getElementById('public-logout-btn').addEventListener('click', handleLogout);
+                document.getElementById('public-search-bar').addEventListener('input', (e) => renderPublicDashboard(e.target.value));
+                document.getElementById('public-currency-toggle-inr').addEventListener('click', () => { currentCurrency = 'INR'; renderAll(); });
+                document.getElementById('public-currency-toggle-usd').addEventListener('click', () => { currentCurrency = 'USD'; renderAll(); });
+            }
+            
+            const updateCurrencyToggle = () => {
+                const toggles = [
+                    { inr: document.getElementById('admin-currency-toggle-inr'), usd: document.getElementById('admin-currency-toggle-usd'), active: 'btn-primary', inactiveClasses: ['bg-slate-200', 'text-slate-600'] },
+                    { inr: document.getElementById('public-currency-toggle-inr'), usd: document.getElementById('public-currency-toggle-usd'), active: 'btn-primary', inactive: 'btn-accent' }
+                ];
+
+                toggles.forEach(t => {
+                    if (!t.inr || !t.usd) return;
+                    t.inr.textContent = 'INR';
+                    t.usd.textContent = 'USD';
+                    
+                    // Reset styles
+                    t.inr.className = 'px-3 py-1 text-sm rounded-md font-semibold';
+                    t.usd.className = 'px-3 py-1 text-sm rounded-md font-semibold';
+
+                    if (currentCurrency === 'INR') {
+                        t.inr.classList.add(t.active, 'text-white');
+                        if(t.inactiveClasses) t.usd.classList.add(...t.inactiveClasses);
+                        else t.usd.classList.add(t.inactive, 'text-white');
+                    } else {
+                        t.usd.classList.add(t.active, 'text-white');
+                        if(t.inactiveClasses) t.inr.classList.add(...t.inactiveClasses);
+                        else t.inr.classList.add(t.inactive, 'text-white');
+                    }
+                });
+            };
+            
+            // Chatbot Listeners
+            document.getElementById('chatbot-container').addEventListener('click', () => document.getElementById('chatbot-window').classList.toggle('hidden'));
+            document.getElementById('close-chatbot').addEventListener('click', () => document.getElementById('chatbot-window').classList.add('hidden'));
+            document.getElementById('chatbot-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && e.target.value) {
+                    const input = e.target.value;
+                    const messages = document.getElementById('chatbot-messages');
+                    messages.innerHTML += `<div class="text-right mt-2"><span class="bg-primary text-white p-2 rounded-lg inline-block text-sm">${input}</span></div>`;
+                    let response = "Sorry, I can only provide info on main department budgets. Try 'sports budget' or 'academics budget'.";
+                    const query = input.toLowerCase();
+                    const budget = ledger.find(tx => tx.type === 'budget' && tx.to.toLowerCase().includes(query.split(' ')[0]));
+                    if (budget) response = `The budget for ${budget.to} is ${formatCurrency(budget.amount)}.`;
+                    
+                    setTimeout(() => {
+                         messages.innerHTML += `<div class="text-left mt-2"><span class="bg-slate-200 p-2 rounded-lg inline-block text-sm">${response}</span></div>`;
+                         messages.scrollTop = messages.scrollHeight;
+                    }, 500);
+                    e.target.value = '';
+                }
+            });
+
+            // --- INITIALIZATION ---
+            const token = localStorage.getItem('authToken');
+            if(token) {
+                 fetchTransactions().then(() => {
+                    try {
+                        const userRole = JSON.parse(atob(token.split('.')[1])).role;
+                        if(userRole === 'College Admin') showPage('admin'); else showPage('public');
+                    } catch(e) { handleLogout(); }
+                });
+            } else {
+                showPage('login');
+                renderAuthForm();
+            }
+        });
+    </script>
+</body>
+</html>
+
